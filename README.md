@@ -10,3 +10,7 @@ VPS 一键 TCP 调优脚本，专门针对 Debian 13 (Trixie) 及其搭载的 Li
 ```
 bash <(curl -sL https://raw.githubusercontent.com/NakanoSanku/vps/refs/heads/main/tcp_optimize_debian13)
 ```
+## 🌐网络质量
+<img width="745" height="968" alt="image" src="https://github.com/user-attachments/assets/59492a0b-d1d2-4c0a-ad44-701b2d16cbf5" />
+
+
