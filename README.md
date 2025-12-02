@@ -13,4 +13,29 @@ bash <(curl -sL https://raw.githubusercontent.com/NakanoSanku/vps/refs/heads/mai
 ## 🌐网络质量
 <img width="745" height="968" alt="image" src="https://github.com/user-attachments/assets/59492a0b-d1d2-4c0a-ad44-701b2d16cbf5" />
 
+# 🛡️ UFW Firewall Auto Setup | UFW 防火墙一键安全配置
 
+这是一个交互式的 Bash 脚本，旨在为 Linux VPS (Debian/Ubuntu) 提供开箱即用的安全防火墙配置。它解决了手动配置 UFW 时常见的 SSH 误封、Cloudflare 规则繁琐以及 Docker 容器无法访问宿主机等痛点。
+
+## ✨ 主要功能 (Features)
+
+  * ✅ **SSH 安全防护**：自动检测当前 SSH 端口（即使非 22 端口），防止将自己锁在服务器外。
+  * ☁️ **Cloudflare 集成**：(可选) 自动拉取 Cloudflare 最新 IPv4/IPv6 列表，仅允许 CF 流量访问 80/443 端口，隐藏源站 IP。
+  * 🐳 **Docker 友好**：(可选) 智能放行 `172.16.0.0/12` 网段，解决容器无法连接宿主机数据库/服务的问题。
+  * 🤖 **交互式引导**：全程向导式操作，并在执行前提供最终确认。
+
+## 🚀 快速开始 (Quick Start)
+
+无需下载文件，直接在服务器终端执行以下命令即可（需要 Root 权限）：
+
+```bash
+bash <(curl -sL https://raw.githubusercontent.com/NakanoSanku/vps/refs/heads/main/ufw.sh)
+```
+
+## 📋 脚本逻辑
+
+1.  **环境检查**：自动安装 `ufw`, `curl` 等必要组件。
+2.  **重置规则**：清空旧的防火墙规则，确保环境纯净。
+3.  **默认策略**：拒绝入站，允许出站。
+4.  **规则应用**：根据你的选择，依次放行 SSH、Cloudflare IP 段和 Docker 网段。
+5.  **启用服务**：最后启用 UFW 并展示状态。
