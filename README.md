@@ -6,7 +6,7 @@
 ## ⚡ 快速安装
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/NakanoSanku/vps/refs/heads/main/tcp_optimize_debian13)
+bash <(curl -sL https://raw.githubusercontent.com/NakanoSanku/vps/refs/heads/main/tcp_optimize_debian13.sh)
 ```
 
 ## ✨ 核心亮点
