@@ -172,13 +172,24 @@ step_ai_tools() {
     fi
 }
 
-# --- 7. Git 配置 ---
+# --- 7. Git 配置 (已更新为手动输入) ---
 step_git_config() {
-    echo -e "即将设置 Git 用户: ${BLUE}NakanoSanku${NC} / ${BLUE}KateTseng.Dev@gmail.com${NC}"
-    if confirm "确认应用此 Git 配置？"; then
-        git config --global user.name "NakanoSanku"
-        git config --global user.email "KateTseng.Dev@gmail.com"
-        log_success "Git 配置已更新"
+    if confirm "是否现在配置 Git 用户信息？"; then
+        echo -e "${BLUE}请输入 Git 用户名 (User Name):${NC}"
+        read -r git_name
+        
+        echo -e "${BLUE}请输入 Git 邮箱 (User Email):${NC}"
+        read -r git_email
+
+        if [[ -n "$git_name" && -n "$git_email" ]]; then
+            git config --global user.name "$git_name"
+            git config --global user.email "$git_email"
+            log_success "Git 配置已更新: $git_name <$git_email>"
+        else
+            log_warn "输入为空，跳过 Git 配置。"
+        fi
+    else
+        log_warn "跳过 Git 配置"
     fi
 }
 
