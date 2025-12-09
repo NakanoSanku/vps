@@ -128,7 +128,6 @@ step_runtimes() {
         export PATH="$HOME/.local/share/fnm:$PATH"
         eval "`fnm env`"
         fnm install --lts
-        fnm use lts
         log_success "Node.js $(node -v) 安装完成"
     fi
 }
