@@ -62,7 +62,7 @@ bash <(curl -sL https://raw.githubusercontent.com/NakanoSanku/vps/refs/heads/mai
 ## ⚡ 快速开始
 
 ```bash
-bash <(curl -sL https://raw.githubusercontent.com/NakanoSanku/vps/refs/heads/main/setup.sh)
+bash <(curl -sL https://raw.githubusercontent.com/NakanoSanku/vps/refs/heads/main/setup_interactive.sh)
 ```
 
 ## ✨ 核心功能
