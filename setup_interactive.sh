@@ -1,254 +1,283 @@
 #!/bin/bash
 
+# ==========================================================
+#  Linux 开发环境配置向导 (v3.1 SSH增强版)
+#  新增：GitHub SSH Key 自动生成与展示
+# ==========================================================
+
 # --- 颜色定义 ---
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[0;33m'
 BLUE='\033[0;34m'
-NC='\033[0m' # No Color
+CYAN='\033[0;36m'
+NC='\033[0m'
 
-# --- 0. 权限检测 (Root兼容核心) ---
-SUDO_CMD=""
-if [ "$EUID" -ne 0 ]; then
-    # 如果不是 root，检查 sudo 是否存在
-    if command -v sudo &> /dev/null; then
-        SUDO_CMD="sudo"
-        echo -e "${BLUE}[INFO]${NC} 检测到普通用户，将使用 sudo 提权。"
+# --- 全局配置 ---
+CONFIG_DIR="$HOME/.config"
+BACKUP_SUFFIX="_backup_$(date +%Y%m%d_%H%M%S)"
+# 存储用户选择的任务
+SELECTED_TASKS=""
+# 全局变量存储邮箱，用于SSH生成
+GLOBAL_GIT_EMAIL=""
+
+# --- 0. 基础环境与权限检测 ---
+prepare_env() {
+    # 1. 权限检测
+    if [ "$EUID" -ne 0 ]; then
+        if command -v sudo &> /dev/null; then
+            SUDO_CMD="sudo"
+        else
+            echo -e "${RED}[ERROR] 需要 sudo 权限或 root 用户。${NC}"
+            exit 1
+        fi
+        NPM_ROOT_FLAGS=""
     else
-        echo -e "${RED}[ERROR]${NC} 你是普通用户但未安装 sudo，脚本无法继续。"
-        exit 1
+        echo -e "${YELLOW}[WARN] 正在以 ROOT 运行。${NC}"
+        SUDO_CMD=""
+        NPM_ROOT_FLAGS="--unsafe-perm=true --allow-root"
     fi
-else
-    echo -e "${YELLOW}[WARN]${NC} 检测到 Root 用户。将直接在 /root 目录下配置环境。"
-    # 对于 npm，root 用户有时需要特殊标志
-    NPM_ROOT_FLAGS="--unsafe-perm=true --allow-root"
-fi
+
+    # 2. 检测 whiptail
+    if ! command -v whiptail &> /dev/null; then
+        echo -e "${BLUE}[INFO] 正在安装界面库 (whiptail)...${NC}"
+        $SUDO_CMD apt update -y &> /dev/null
+        $SUDO_CMD apt install whiptail -y &> /dev/null
+    fi
+}
 
 # --- 辅助函数 ---
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[OK]${NC} $1"; }
-log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
+log_step() { echo -e "\n${CYAN}>>> [执行中] $1${NC}"; }
+log_success() { echo -e "${GREEN}[完成] $1${NC}"; }
+log_warn() { echo -e "${YELLOW}[注意] $1${NC}"; }
+log_info() { echo -e "${BLUE}[信息] $1${NC}"; }
 
-# 交互确认函数
-confirm() {
-    echo -n -e "${YELLOW}[?] $1 (y/n) [默认y]: ${NC}"
-    read -r response
-    response=${response,,} # 转小写
-    if [[ -z "$response" || "$response" =~ ^y$ ]]; then
-        return 0
-    else
-        return 1
+backup_file() {
+    local file_path="$1"
+    if [ -f "$file_path" ]; then
+        cp "$file_path" "${file_path}${BACKUP_SUFFIX}"
+        echo -e "${YELLOW}  已备份: $(basename "$file_path")${BACKUP_SUFFIX}${NC}"
     fi
 }
 
-# --- 1. 系统更新与基础依赖 ---
-step_system_update() {
-    log_info "准备更新 apt 源并安装: curl, wget, git, build-essential, fish"
-    if confirm "是否执行系统更新和基础安装？"; then
-        $SUDO_CMD apt update -y
-        # 增加 sudo 安装 (防止某些极简 Docker 镜像连 sudo 都没有，虽然 root 不用，但某些工具依赖)
-        $SUDO_CMD apt install curl wget unzip git build-essential fish -y
-        log_success "基础依赖安装完成"
-    else
-        log_warn "跳过系统更新"
+# --- 菜单界面 ---
+show_menu() {
+    SELECTED_TASKS=$(whiptail --title "Linux 开发环境配置向导" --checklist \
+    "请按 [空格键] 勾选/取消，[回车键] 确认" 22 78 11 \
+    "SYS_UPD"   "系统更新 & 基础依赖 (curl, git, fish)" ON \
+    "FISH_CFG"  "设置 Fish 为默认 Shell 并安装 Fisher" ON \
+    "RUST_ENV"  "安装 Rust 环境 (Rustup)" ON \
+    "RUST_TLS"  "安装 Rust 命令行工具 (二进制加速)" ON \
+    "RUNTIMES"  "安装 Node.js (fnm) & Python (uv)" ON \
+    "WR_CONF"   "覆盖写入 Fish & Starship 配置文件" ON \
+    "AI_TOOLS"  "安装 AI CLI (Claude, Gemini, Codex)" OFF \
+    "GIT_CFG"   "配置 Git 用户名与邮箱" OFF \
+    "SSH_KEY"   "生成 SSH 密钥 (用于 GitHub 访问)" OFF \
+    3>&1 1>&2 2>&3)
+
+    if [ $? != 0 ]; then
+        echo "用户取消操作。"
+        exit 0
     fi
 }
 
-# --- 2. 配置 Fish Shell ---
-step_fish_setup() {
-    if confirm "是否将 Fish 设为默认 Shell 并安装 Fisher 插件管理器？"; then
-        # 设为默认
-        CURRENT_SHELL=$(grep "^$USER" /etc/passwd | cut -d: -f7)
-        FISH_PATH=$(which fish)
-        if [[ "$CURRENT_SHELL" != "$FISH_PATH" ]]; then
-            $SUDO_CMD chsh -s "$FISH_PATH" "$USER"
-            log_success "默认 Shell 已修改 (需注销或重启终端生效)"
+# --- 任务执行函数 ---
+
+task_sys_update() {
+    log_step "系统更新与基础依赖"
+    $SUDO_CMD apt update -y
+    $SUDO_CMD apt install -y curl wget unzip git build-essential fish ca-certificates gnupg
+    log_success "基础依赖安装完毕"
+}
+
+task_fish_cfg() {
+    log_step "配置 Fish Shell"
+    FISH_PATH=$(which fish)
+    if [[ -n "$FISH_PATH" && "$SHELL" != "$FISH_PATH" ]]; then
+        if ! grep -q "$FISH_PATH" /etc/shells; then
+            echo "$FISH_PATH" | $SUDO_CMD tee -a /etc/shells
         fi
-
-        # 安装 Fisher (在 fish 进程中执行)
-        log_info "正在安装 Fisher..."
-        # 注意：fish -c 会使用当前用户的环境，Root 下也没问题
-        fish -c "curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher"
-        log_success "Fisher 安装完成"
-    else
-        log_warn "跳过 Fish 配置"
+        $SUDO_CMD chsh -s "$FISH_PATH" "$USER"
+        log_success "默认 Shell 已修改"
     fi
+    fish -c "curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher"
+    log_success "Fisher 已安装"
 }
 
-# --- 3. Rust 环境与工具 ---
-step_rust_setup() {
-    # 3.1 安装 Rust
-    if confirm "是否安装 Rust 基础环境 (rustup + cargo)？"; then
-        if ! command -v rustc &> /dev/null; then
-            # Root 下通常不需要 sudo，rustup 会安装到 ~/.cargo
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-            source "$HOME/.cargo/env"
-            log_success "Rust 安装完成"
-        else
-            log_info "Rust 已存在，跳过安装"
-        fi
-    else
-        log_warn "跳过 Rust 环境安装"
-        return
-    fi
-
-    # 3.2 安装工具
-    log_info "即将安装 Rust 工具: ripgrep, fd, bat, eza, zoxide, bottom, starship"
-    log_warn "注意：这需要从源码编译，耗时较长 (5-15分钟)。"
-    if confirm "是否编译安装这些工具？"; then
+task_rust_env() {
+    log_step "安装 Rust (Rustup)"
+    if ! command -v rustc &> /dev/null; then
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
         source "$HOME/.cargo/env"
-        TOOLS="ripgrep fd-find bat eza zoxide bottom starship"
-        for tool in $TOOLS; do
-            if ! cargo install --list | grep -q "^$tool "; then
-                echo "正在编译 $tool ..."
-                cargo install "$tool"
-            else
-                echo "$tool 已安装"
-            fi
-        done
-        log_success "Rust 工具集安装完成"
+        log_success "Rust 安装完成"
     else
-        log_warn "跳过 Rust 工具编译"
+        source "$HOME/.cargo/env"
+        log_info "Rust 已存在"
     fi
 }
 
-# --- 4. 运行时 (Node & Python) ---
-step_runtimes() {
-    # Python uv
-    if confirm "是否安装 uv (极速 Python 包管理器)？"; then
-        curl -LsSf https://astral.sh/uv/install.sh | sh
+task_rust_tools() {
+    log_step "安装 Rust 工具 (Cargo Binstall)"
+    source "$HOME/.cargo/env"
+    if ! command -v cargo-binstall &> /dev/null; then
+        curl -L --proto '=https' --tlsv1.2 -sSf https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh | bash
     fi
 
-    # Node fnm
-    if confirm "是否安装 fnm (Node.js 管理器) 及 Node LTS？"; then
-        # fnm 在 root 下安装到 /root/.local/share/fnm，这是完全合法的
-        curl -fsSL https://fnm.vercel.app/install | bash
-        
-        # 临时激活
-        export PATH="$HOME/.local/share/fnm:$PATH"
-        eval "`fnm env`"
-        fnm install --lts
-        log_success "Node.js $(node -v) 安装完成"
-    fi
+    TOOLS="ripgrep fd-find bat eza zoxide bottom starship"
+    for tool in $TOOLS; do
+        local bin_name=$tool
+        [[ "$tool" == "fd-find" ]] && bin_name="fd"
+        [[ "$tool" == "ripgrep" ]] && bin_name="rg"
+        [[ "$tool" == "bottom" ]] && bin_name="btm"
+
+        if ! command -v "$bin_name" &> /dev/null; then
+            echo "安装 $tool ..."
+            cargo binstall -y "$tool"
+        else
+            echo "✔ $tool 已存在"
+        fi
+    done
+    log_success "Rust 工具集就绪"
 }
 
-# --- 5. 写入配置文件 ---
-step_config_files() {
-    log_warn "即将覆盖 ~/.config/fish/config.fish"
-    if confirm "是否写入 Fish 和 Starship 的配置文件？"; then
-        mkdir -p ~/.config/fish
-        mkdir -p ~/.config/fish/functions
+task_runtimes() {
+    log_step "安装 Runtimes"
+    curl -LsSf https://astral.sh/uv/install.sh | sh
+    curl -fsSL https://fnm.vercel.app/install | bash
+    export PATH="$HOME/.local/share/fnm:$PATH"
+    eval "$(fnm env --shell bash)"
+    fnm install --lts
+    fnm use lts
+    log_success "Node & Python(uv) 安装完毕"
+}
 
-        # 使用 cat EOF 写入，这里不用 sudo，因为配置的是当前用户(可能是root)的目录
-        cat > ~/.config/fish/config.fish << 'EOF'
-# --- 1. 路径配置 (优先级最高) ---
-fish_add_path ~/.cargo/bin
-fish_add_path ~/.local/share/fnm
-fish_add_path ~/.local/bin
-
-# --- 2. 交互式配置 ---
-if status is-interactive
-    # Starship
-    starship init fish | source
-    # Fnm
-    fnm env --use-on-cd | source
-    # Zoxide
-    zoxide init fish | source
-
-    # --- Aliases ---
-    alias ls="eza --icons --git"
-    alias ll="eza --icons --git -l -h"
-    alias tree="eza --icons --tree --level=2"
-    alias cat="bat"
-    alias grep="rg"
-    alias find="fd"
-    alias top="btm"
+task_write_conf() {
+    log_step "写入配置文件"
+    mkdir -p "$CONFIG_DIR/fish"
+    backup_file "$CONFIG_DIR/fish/config.fish"
     
-    # AI CLI: 增加 root 兼容参数
+    cat > "$CONFIG_DIR/fish/config.fish" << 'EOF'
+fish_add_path $HOME/.cargo/bin
+fish_add_path $HOME/.local/share/fnm
+fish_add_path $HOME/.local/bin
+
+if status is-interactive
+    if type -q starship; starship init fish | source; end
+    if type -q fnm; fnm env --use-on-cd | source; end
+    if type -q zoxide; zoxide init fish | source; end
+    
+    if type -q eza
+        alias ls="eza --icons --git"
+        alias ll="eza --icons --git -l -h"
+        alias tree="eza --icons --tree --level=2"
+    end
+    if type -q bat; alias cat="bat"; end
+    if type -q rg; alias grep="rg"; end
+    if type -q fd; alias find="fd"; end
     alias cc="claude --dangerously-skip-permissions"
 end
 EOF
-        
-        # Starship 配置
-        mkdir -p ~/.config
-        echo "add_newline = false" > ~/.config/starship.toml
-        log_success "配置文件写入完成"
+    echo "add_newline = false" > "$CONFIG_DIR/starship.toml"
+    log_success "配置文件更新"
+}
+
+task_ai_tools() {
+    log_step "安装 AI CLI"
+    export PATH="$HOME/.local/share/fnm:$PATH"
+    if command -v fnm &> /dev/null; then eval "$(fnm env --shell bash)"; fi
+
+    if command -v npm &> /dev/null; then
+        npm install -g @google/gemini-cli $NPM_ROOT_FLAGS
+        npm install -g @anthropic-ai/claude-code $NPM_ROOT_FLAGS
+        log_success "AI 工具安装完毕"
+    fi
+}
+
+task_git_cfg() {
+    log_step "Git 用户配置"
+    echo -e "${YELLOW}请输入 Git 信息 (直接回车跳过):${NC}"
+    echo -n "User Name: "
+    read -r git_name
+    echo -n "User Email: "
+    read -r git_email
+
+    if [[ -n "$git_name" && -n "$git_email" ]]; then
+        git config --global user.name "$git_name"
+        git config --global user.email "$git_email"
+        git config --global --add safe.directory "*"
+        GLOBAL_GIT_EMAIL="$git_email" # 保存给 SSH 步骤使用
+        log_success "Git 配置更新"
     else
-        log_warn "跳过配置文件写入"
+        log_info "跳过 Git 配置"
     fi
 }
 
-# --- 6. AI 工具链 ---
-step_ai_tools() {
-    if confirm "是否安装 AI CLI (Gemini, Codex, Claude)？"; then
-        export PATH="$HOME/.local/share/fnm:$PATH"
-        eval "`fnm env`"
-        
-        if command -v npm &> /dev/null; then
-            log_info "正在通过 npm 安装 AI 工具 (可能需要几分钟)..."
-            # 这里的 NPM_ROOT_FLAGS 确保在 Root 下安装不会报错
-            npm install -g @google/gemini-cli $NPM_ROOT_FLAGS
-            npm install -g @openai/codex $NPM_ROOT_FLAGS
-            npm install -g @anthropic-ai/claude-code $NPM_ROOT_FLAGS
-            log_success "AI CLI 工具安装完成"
-        else
-            log_warn "未检测到 npm，请先安装 Runtime。"
-        fi
-    fi
-}
+task_ssh_key() {
+    log_step "生成 GitHub SSH 密钥 (Ed25519)"
+    KEY_PATH="$HOME/.ssh/id_ed25519"
 
-# --- 7. Git 配置 ---
-step_git_config() {
-    if confirm "是否现在配置 Git 用户信息？"; then
-        echo -e "${BLUE}请输入 Git 用户名 (User Name):${NC}"
-        read -r git_name
-        
-        echo -e "${BLUE}请输入 Git 邮箱 (User Email):${NC}"
-        read -r git_email
-
-        if [[ -n "$git_name" && -n "$git_email" ]]; then
-            git config --global user.name "$git_name"
-            git config --global user.email "$git_email"
-            # 解决 Root 目录下 Git 有时会报 unsafe directory 的问题
-            git config --global --add safe.directory "*"
-            log_success "Git 配置已更新"
-        else
-            log_warn "输入为空，跳过。"
-        fi
+    # 1. 检查是否存在
+    if [ -f "$KEY_PATH" ]; then
+        log_warn "检测到已有密钥: $KEY_PATH"
+        log_info "跳过生成，仅显示现有公钥..."
     else
-        log_warn "跳过 Git 配置"
+        # 2. 获取邮箱 (优先使用刚才 Git 配置的，没有则尝试读取 git config，再没有则用默认)
+        if [ -z "$GLOBAL_GIT_EMAIL" ]; then
+            GLOBAL_GIT_EMAIL=$(git config --global user.email)
+        fi
+        if [ -z "$GLOBAL_GIT_EMAIL" ]; then
+            GLOBAL_GIT_EMAIL="$USER@$(hostname)"
+        fi
+
+        echo "使用邮箱标识: $GLOBAL_GIT_EMAIL"
+        # -N "" 表示空密码，方便自动化；-f 指定路径
+        mkdir -p ~/.ssh
+        ssh-keygen -t ed25519 -C "$GLOBAL_GIT_EMAIL" -f "$KEY_PATH" -N ""
+        log_success "密钥生成完成"
     fi
+
+    # 3. 启动 ssh-agent 并添加
+    if ! pgrep -u "$USER" ssh-agent > /dev/null; then
+        eval "$(ssh-agent -s)" > /dev/null
+    fi
+    ssh-add "$KEY_PATH" > /dev/null 2>&1
+
+    # 4. 醒目展示
+    echo -e "\n${YELLOW}================================================================${NC}"
+    echo -e "${YELLOW}请复制下方公钥 (Public Key) 添加到 GitHub -> Settings -> SSH Keys:${NC}"
+    echo -e "${GREEN}----------------------------------------------------------------${NC}"
+    cat "${KEY_PATH}.pub"
+    echo -e "${GREEN}----------------------------------------------------------------${NC}"
+    echo -e "${YELLOW}================================================================${NC}\n"
+    
+    # 暂停等待用户复制
+    read -n 1 -s -r -p ">>> 请复制上方密钥，完成后按任意键继续..."
+    echo ""
 }
 
-# --- 主程序 ---
-clear
-echo -e "${GREEN}=============================================${NC}"
-echo -e "   Linux 开发环境交互式配置向导 (Root兼容版)   "
-echo -e "${GREEN}=============================================${NC}"
-echo "当前用户: $(whoami) (UID: $EUID)"
-if [ "$EUID" -eq 0 ]; then
-    echo -e "${RED}警告: 您正在以 ROOT 身份运行。环境将配置在 /root 下。${NC}"
-fi
-echo ""
-echo "按 Enter 键选择默认 [y] (是)，输入 n 选择 [no] (否)"
-echo ""
+# --- 主流程 ---
+main() {
+    prepare_env
+    show_menu
+    clear
 
-step_system_update
-echo ""
-step_fish_setup
-echo ""
-step_rust_setup
-echo ""
-step_runtimes
-echo ""
-step_config_files
-echo ""
-step_ai_tools
-echo ""
-step_git_config
+    # 根据选择执行
+    if [[ $SELECTED_TASKS == *"SYS_UPD"* ]]; then task_sys_update; fi
+    if [[ $SELECTED_TASKS == *"FISH_CFG"* ]]; then task_fish_cfg; fi
+    if [[ $SELECTED_TASKS == *"RUST_ENV"* ]]; then task_rust_env; fi
+    if [[ $SELECTED_TASKS == *"RUST_TLS"* ]]; then task_rust_tools; fi
+    if [[ $SELECTED_TASKS == *"RUNTIMES"* ]]; then task_runtimes; fi
+    if [[ $SELECTED_TASKS == *"WR_CONF"* ]]; then task_write_conf; fi
+    if [[ $SELECTED_TASKS == *"AI_TOOLS"* ]]; then task_ai_tools; fi
+    
+    # 交互式配置放在最后
+    if [[ $SELECTED_TASKS == *"GIT_CFG"* ]]; then task_git_cfg; fi
+    if [[ $SELECTED_TASKS == *"SSH_KEY"* ]]; then task_ssh_key; fi
 
-echo ""
-echo -e "${GREEN}=============================================${NC}"
-echo -e "${GREEN}   所有配置已完成！  ${NC}"
-echo -e "${GREEN}=============================================${NC}"
-echo "建议输入 'fish' 进入新环境测试。"
+    echo -e "\n${GREEN}=========================================${NC}"
+    echo -e "${GREEN}   ✅ 所有配置已完成！   ${NC}"
+    echo -e "${GREEN}=========================================${NC}"
+    echo -e "建议执行: ${YELLOW}exec fish${NC} 进入新环境。"
+}
+
+main
