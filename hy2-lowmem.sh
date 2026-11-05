@@ -1,18 +1,17 @@
 #!/bin/sh
 # hy2-lowmem.sh - 面向低内存机器（含 64MB 容器 / NAT VPS）的 Hysteria2 一键配置脚本
 #
-# 用法:
-#   sh hy2-lowmem.sh [install] [选项]     安装或更新（默认）
-#   sh hy2-lowmem.sh show                 显示分享链接
-#   sh hy2-lowmem.sh status               显示服务和内存状态
-#   sh hy2-lowmem.sh uninstall [--yes]    卸载
+# 一键安装（用 root 运行）:
+#   (curl -fsSL https://raw.githubusercontent.com/NakanoSanku/vps/refs/heads/main/hy2-lowmem.sh || wget -qO- https://raw.githubusercontent.com/NakanoSanku/vps/refs/heads/main/hy2-lowmem.sh) | sh
 #
-# 常用示例:
-#   sh hy2-lowmem.sh --dry-run                        只检测并显示计划，不做改动
-#   sh hy2-lowmem.sh --port 28443                     指定监听端口
-#   sh hy2-lowmem.sh --port 10000 --public-port 28443 NAT：内部 10000 映射到外部 28443
-#
-# 运行 sh hy2-lowmem.sh --help 查看全部选项。
+# 传参时在 sh 后面加 -s --，例如指定端口:
+#   ... | sh -s -- --port 28443
+#   ... | sh -s -- --port 10000 --public-port 28443    NAT：内部 10000 映射到外部 28443
+#   ... | sh -s -- --dry-run                           只检测并显示计划，不做改动
+#   ... | sh -s -- show                                显示分享链接
+#   ... | sh -s -- status                              显示服务和内存状态
+#   ... | sh -s -- uninstall                           卸载
+#   ... | sh -s -- --help                              查看全部选项
 
 set -eu
 umask 077
@@ -57,7 +56,8 @@ has() { command -v "$1" >/dev/null 2>&1; }
 
 usage() {
     cat <<'EOF'
-用法: sh hy2-lowmem.sh [install|show|status|uninstall] [选项]
+一键运行: curl -fsSL https://raw.githubusercontent.com/NakanoSanku/vps/refs/heads/main/hy2-lowmem.sh | sh -s -- [命令] [选项]
+命令: install（默认） | show | status | uninstall
 
 安装选项:
   --port N             容器/主机内部监听的 UDP 端口（1024-65535，默认随机 20000 以上）
@@ -696,7 +696,7 @@ cmd_uninstall() {
 
     echo "将删除: $BIN $CONF_DIR $LOG_FILE，以及服务 $SVC_NAME"
     if [ "$ASSUME_YES" != 1 ]; then
-        [ -r /dev/tty ] || die "无法确认，请加 --yes"
+        (exec </dev/tty) 2>/dev/null || die "没有可用终端，无法确认，请加 --yes"
         printf '确认卸载？输入 yes 继续: ' >/dev/tty
         read -r answer </dev/tty
         [ "$answer" = yes ] || die "已取消"
@@ -848,7 +848,7 @@ cmd_install() {
         fi
         open_firewall
         sleep 2
-        service_is_running || die "服务没有运行，请运行 sh $0 status 查看原因"
+        service_is_running || die "服务没有运行，查看 $LOG_FILE 或服务日志"
         info "服务已启动并设为开机自启"
         ;;
     esac
